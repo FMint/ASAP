@@ -119,6 +119,7 @@ class LeggedRobotBase(BaseTask):
         self._kp_scale = torch.ones(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         self._kd_scale = torch.ones(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         self._rfi_lim_scale = torch.ones(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
+        self._rao_scale = torch.ones(self.num_envs, self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
         self.push_robot_vel_buf = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
         self.record_push_robot_vel_buf = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
 
@@ -183,7 +184,6 @@ class LeggedRobotBase(BaseTask):
                 continue
             self.reward_names.append(name)
             name = '_reward_' + name
-            print("all_reward_name:###################::", name)
             self.reward_functions.append(getattr(self, name))
             # reward episode sums
             self.episode_sums = {name: torch.zeros(self.num_envs, dtype=torch.float, device=self.device, requires_grad=False)
@@ -571,7 +571,9 @@ class LeggedRobotBase(BaseTask):
         
         if self.config.domain_rand.randomize_torque_rfi:
             torques = torques + (torch.rand_like(torques)*2.-1.) * self.config.domain_rand.rfi_lim * self._rfi_lim_scale * self.torque_limits
-        
+        if self.config.domain_rand.use_rao:
+            torques = torques + self._rao_scale * self.torque_limits
+
         if self.config.robot.control.clip_torques:
             return torch.clip(torques, -self.torque_limits, self.torque_limits)
         
@@ -785,6 +787,9 @@ class LeggedRobotBase(BaseTask):
     
         if self.config.domain_rand.randomize_rfi_lim:
             self._rfi_lim_scale[env_ids] = torch_rand_float(self.config.domain_rand.rfi_lim_range[0], self.config.domain_rand.rfi_lim_range[1], (len(env_ids), self.num_dofs), device=self.device)
+        if self.config.domain_rand.use_rao:
+            self._rao_scale[env_ids] = torch_rand_float(-self.config.domain_rand.rao_lim, self.config.domain_rand.rao_lim, (len(env_ids), self.num_dofs), device=self.device)
+
 
         if self.config.domain_rand.randomize_ctrl_delay:            
             # self.action_queue[env_ids] = 0.delay:
@@ -803,7 +808,11 @@ class LeggedRobotBase(BaseTask):
         max_vel = self.config.domain_rand.max_push_vel_xy
         self.push_robot_vel_buf[env_ids] = torch_rand_float(-max_vel, max_vel, (len(env_ids), 2), device=str(self.device))  # lin vel x/y
         self.record_push_robot_vel_buf[env_ids] = self.push_robot_vel_buf[env_ids].clone()
-        self.simulator.robot_root_states[env_ids, 7:9] = self.push_robot_vel_buf[env_ids]
+        
+        if '_push_fixed' in self.config.domain_rand and self.config.domain_rand._push_fixed:
+            self.simulator.robot_root_states[env_ids, 7:9] += self.push_robot_vel_buf[env_ids]
+        else:
+            self.simulator.robot_root_states[env_ids, 7:9] = self.push_robot_vel_buf[env_ids]
         # self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.simulator.all_root_states))
 
 
