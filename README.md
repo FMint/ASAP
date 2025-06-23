@@ -33,7 +33,7 @@ See `README_origin.md`
 > export LD_LIBRARY_PATH=/opt/conda/envs/hvgym/lib:$LD_LIBRARY_PATH
 
 
-# Motion Tracking Training on x1
+# Motion Tracking Training on G1 with PBHC domain_rand
 
 Train a phase-based motion tracking policy to imitate dance motion from AMASS dataset
 
