@@ -37,7 +37,7 @@ See `README_origin.md`
 
 Train a phase-based motion tracking policy to imitate dance motion from AMASS dataset
 
-<!-- ```bash
+```bash
 # 3090[111] AtTheMercyOfGod_pkl_from_PbhcMink_DomainRand_RefPbhc
 nohup python humanoidverse/train_agent.py \
   +simulator=isaacgym \
@@ -59,7 +59,7 @@ nohup python humanoidverse/train_agent.py \
   env.config.termination_curriculum.terminate_when_motion_far_threshold_min=0.3 \
   env.config.termination_curriculum.terminate_when_motion_far_curriculum_degree=0.000025 \
   robot.asset.self_collisions=0 > nohup_AtTheMercyOfGod_pkl_from_PbhcMink_DomainRand_RefPbhc 2>&1 &
-``` -->
+```
 
 
 continue training from ckpt
