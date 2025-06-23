@@ -42,7 +42,7 @@ Train a phase-based motion tracking policy to imitate dance motion from AMASS da
 nohup python humanoidverse/train_agent.py \
   +simulator=isaacgym \
   +exp=motion_tracking \
-  +domain_rand=domain_rand_base_pbhc \
+  +domain_rand=domain_rand_pbhc \
   +rewards=motion_tracking/reward_motion_tracking_dm_2real_official \
   +robot=g1/g1_23dof \
   +terrain=terrain_locomotion_plane \
