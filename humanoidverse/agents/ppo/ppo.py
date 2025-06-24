@@ -391,7 +391,8 @@ class PPO(BaseAlgo):
                     self.data_to_save_per_env[env_idx]['root_rot'].append(root_rot_current[env_idx])
                     self.data_to_save_per_env[env_idx]['actions'].append(actions_current[env_idx])
                     self.data_to_save_per_env[env_idx]['terminate'].append(terminate_current[env_idx])
-    
+
+                '''
                 # --- 直接在这里打印原始张量 (每个环境步都会打印一次) ---
                 # 警告：这会产生巨大的控制台输出
                 print("#############################################################")
@@ -439,7 +440,7 @@ class PPO(BaseAlgo):
                     print(f"Raw Terminate for Env {i}: \n {dones[i].cpu().tolist()}")
                 #print(f"Raw Terminate: {dones.cpu().tolist()}")
                 print("-" * 50)
-
+                '''
 
                 self._process_env_step(rewards, dones, infos)
 
