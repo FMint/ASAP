@@ -4,6 +4,9 @@ algo:
   _target_: humanoidverse.agents.ppo.ppo.PPO
   _recursive_: False
   config:
+    save_raw_data_to_npy: True
+    save_raw_data_interval: 10
+    
     num_learning_epochs: 5
     num_mini_batches: 4
     clip_param: 0.2

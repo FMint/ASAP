@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
+from pathlib import Path
 
 from humanoidverse.agents.modules.ppo_modules import PPOActor, PPOCritic
 from humanoidverse.agents.modules.data_utils import RolloutStorage
@@ -27,8 +29,10 @@ class PPO(BaseAlgo):
                  env: BaseTask,
                  config,
                  log_dir=None,
-                 device='cpu'):
-
+                 device='cpu',
+                 experiment_name: str = "default_experiment"): # <-- 新增 experiment_name 参数
+                                                               
+        self.experiment_name = experiment_name
         self.device= device
         self.env = env
         self.config = config
@@ -56,6 +60,34 @@ class PPO(BaseAlgo):
         self.eval_callbacks: list[RL_EvalCallback] = []
         self.episode_env_tensors = TensorAverageMeterDict()
         _ = self.env.reset_all()
+
+        self.data_to_save_per_env = {
+            env_id: {
+                'dof_pos': [],
+                'dof_vel': [],
+                'root_lin_vel': [],
+                'root_ang_vel': [],
+                'root_pos': [],
+                'root_rot': [],
+                'actions': [],
+                'terminate': []
+            } for env_id in range(self.num_envs)
+        }
+        self.all_training_raw_data = [] 
+
+                # 定义最终NPY文件的路径
+        self.full_raw_data_filepath = Path(self.log_dir) / f"{self.experiment_name}_full_raw_data.npy"
+        logger.info(f"Full training raw data will be saved to: {self.full_raw_data_filepath}")
+
+        self.save_raw_data_to_npy = self.config.get('save_raw_data_to_npy', False) # 默认不保存
+        if self.save_raw_data_to_npy:
+            logger.info("Raw data collection for full NPY file is enabled.")
+
+                # 可以设置一个保存原始数据的步数间隔，避免内存爆炸
+        self.save_raw_data_interval = self.config.get('save_raw_data_interval', None) # 从config中获取，默认为None (不保存)
+        if self.save_raw_data_interval is not None:
+             logger.info(f"Raw data will be saved every {self.save_raw_data_interval} iterations.")
+
 
     def _init_config(self):
         # Env related Config
@@ -165,6 +197,34 @@ class PPO(BaseAlgo):
             'infos': infos,
         }, path)
         
+        # if self.save_raw_data_interval is not None and \
+        #    self.current_learning_iteration % self.save_raw_data_interval == 0 and \
+        #    any(self.data_to_save_per_env[0]['dof_pos']): # 确保至少收集到一些数据
+            
+        #     experiment_name = self.experiment_name 
+        #     save_path = Path(path).parent / f"{experiment_name}_raw_data_iter_{self.current_learning_iteration}.npy"
+            
+        #     # 将每个智能体的数据转换为 NumPy 数组
+        #     data_to_dump = {}
+        #     for env_id in range(self.num_envs):
+        #         env_data = {}
+        #         for key, val_list in self.data_to_save_per_env[env_id].items():
+        #             if val_list: # 确保列表不为空
+        #                 env_data[key] = np.array(val_list)
+        #             else:
+        #                 env_data[key] = np.array([]) # 空数组
+        #         data_to_dump[f"env_{env_id}"] = env_data
+            
+        #     np.save(save_path, data_to_dump)
+        #     logger.info(f"Saved raw data for {self.num_envs} environments to {save_path}")
+
+        #     # 清空缓冲区，避免内存溢出
+        #     for env_id in range(self.num_envs):
+        #         for key in self.data_to_save_per_env[env_id].keys():
+        #             self.data_to_save_per_env[env_id][key].clear() # 清空列表
+
+
+        
     def learn(self):
         if self.init_at_random_ep_len:
             self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf, high=int(self.env.max_episode_length))
@@ -186,7 +246,7 @@ class PPO(BaseAlgo):
 
             # Jiawei: Need to return obs_dict to update the obs_dict for the next iteration
             # Otherwise, we will keep using the initial obs_dict for the whole training process
-            obs_dict =self._rollout_step(obs_dict)
+            obs_dict =self._rollout_step(obs_dict, it)
 
             loss_dict = self._training_step()
 
@@ -205,12 +265,61 @@ class PPO(BaseAlgo):
                 'num_learning_iterations': num_learning_iterations
             }
             self._post_epoch_logging(log_dict)
+
+                        # --- 新增：在每次学习迭代结束后保存原始数据 ---
+            if self.save_raw_data_to_npy:
+                # 检查是否收集到数据
+                if any(self.data_to_save_per_env[0]['dof_pos']): 
+                    # 将当前批次的数据转换成 NumPy 数组，并追加到总列表中
+                    current_batch_data = {}
+                    for env_id in range(self.num_envs):
+                        env_data = {}
+                        for key, val_list in self.data_to_save_per_env[env_id].items():
+                            if val_list:
+                                env_data[key] = np.array(val_list) # 转换为 NumPy 数组
+                            else:
+                                env_data[key] = np.array([])
+                        current_batch_data[f"env_{env_id}"] = env_data
+                    
+                    self.all_training_raw_data.append(current_batch_data)
+                    
+                    # 立即保存整个累积列表到 .npy 文件
+                    # 使用 allow_pickle=True 来保存包含字典的列表
+                    np.save(self.full_raw_data_filepath, self.all_training_raw_data, allow_pickle=True)
+                    logger.info(f"Raw data for iteration {it} saved. Total iterations collected: {len(self.all_training_raw_data)}")
+                    
+                    # 清空 self.data_to_save_per_env，为下一个迭代做准备
+                    for env_id in range(self.num_envs):
+                        for key in self.data_to_save_per_env[env_id].keys():
+                            self.data_to_save_per_env[env_id][key].clear()
+                else:
+                    logger.warning(f"No raw data collected in iteration {it} for saving.")
+            # --- 结束新增 ---
+
+
             if it % self.save_interval == 0:
                 self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
             self.ep_infos.clear()
         
         self.current_learning_iteration += num_learning_iterations
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
+
+        if self.save_raw_data_to_npy and any(self.data_to_save_per_env[0]['dof_pos']):
+             # 如果最后一个迭代还有未保存的数据，也保存
+             current_batch_data = {}
+             for env_id in range(self.num_envs):
+                 env_data = {}
+                 for key, val_list in self.data_to_save_per_env[env_id].items():
+                     if val_list:
+                         env_data[key] = np.array(val_list)
+                     else:
+                         env_data[key] = np.array([])
+                 current_batch_data[f"env_{env_id}"] = env_data
+             self.all_training_raw_data.append(current_batch_data)
+             np.save(self.full_raw_data_filepath, self.all_training_raw_data, allow_pickle=True)
+             logger.info(f"Final raw data saved at end of training. Total iterations collected: {len(self.all_training_raw_data)}")
+             self.data_to_save_per_env = {env_id: {k: [] for k in v.keys()} for env_id, v in self.data_to_save_per_env.items()} # 清空
+
 
     def _actor_rollout_step(self, obs_dict, policy_state_dict):
         actions = self._actor_act_step(obs_dict)
@@ -230,7 +339,7 @@ class PPO(BaseAlgo):
 
         return policy_state_dict
 
-    def _rollout_step(self, obs_dict):
+    def _rollout_step(self, obs_dict, current_iteration_num):
         with torch.inference_mode():
             for i in range(self.num_steps_per_env):
                 # Compute the actions and values
@@ -265,39 +374,70 @@ class PPO(BaseAlgo):
                 self.storage.update_key('dones', dones.unsqueeze(1))
                 self.storage.increment_step()
 
-                #obs_dict, rewards, dones, infos = self.env.step(actor_state)
+                dof_pos_current = self.env.simulator.dof_pos.cpu().tolist()
+                dof_vel_current = self.env.simulator.dof_vel.cpu().tolist()
+                root_lin_vel_current = self.env.simulator.robot_root_states[:, 7:10].cpu().tolist()
+                root_ang_vel_current = self.env.simulator.robot_root_states[:, 10:13].cpu().tolist()
+                root_pos_current = self.env.simulator.robot_root_states[:, 0:3].cpu().tolist()
+                root_rot_current = self.env.simulator.robot_root_states[:, 3:7].cpu().tolist()
+                actions_current = policy_state_dict['actions'].cpu().tolist()
+                terminate_current = dones.cpu().tolist() # 使用 dones 作为当前步的终止状态
+                for env_idx in range(self.num_envs):
+                    self.data_to_save_per_env[env_idx]['dof_pos'].append(dof_pos_current[env_idx])
+                    self.data_to_save_per_env[env_idx]['dof_vel'].append(dof_vel_current[env_idx])
+                    self.data_to_save_per_env[env_idx]['root_lin_vel'].append(root_lin_vel_current[env_idx])
+                    self.data_to_save_per_env[env_idx]['root_ang_vel'].append(root_ang_vel_current[env_idx])
+                    self.data_to_save_per_env[env_idx]['root_pos'].append(root_pos_current[env_idx])
+                    self.data_to_save_per_env[env_idx]['root_rot'].append(root_rot_current[env_idx])
+                    self.data_to_save_per_env[env_idx]['actions'].append(actions_current[env_idx])
+                    self.data_to_save_per_env[env_idx]['terminate'].append(terminate_current[env_idx])
     
                 # --- 直接在这里打印原始张量 (每个环境步都会打印一次) ---
                 # 警告：这会产生巨大的控制台输出
                 print("#############################################################")
                 print('-----------------------current_learning_iteration----------------------------------')
-                print(f"--- Iteration{self.current_learning_iteration}, Step {i} ---")
+                print(f"--- Iteration{current_iteration_num}, Step {i} ---")
 
                 print('----------------------------dof_pos----------------------------------')
-                print(f"Raw DOF Pos: {self.env.simulator.dof_pos.cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw DOF Pos for Env {i}: \n {self.env.simulator.dof_pos[i].cpu().tolist()}")
+                #print(f"Raw DOF Pos: {self.env.simulator.dof_pos.cpu().tolist()}")
                 
                 print('-----------------------------dof_vel----------------------------------')
-                print(f"Raw DOF Vel: {self.env.simulator.dof_vel.cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw DOF Vel for Env {i}: \n {self.env.simulator.dof_vel[i].cpu().tolist()}")
+                #print(f"Raw DOF Vel: {self.env.simulator.dof_vel.cpu().tolist()}")
                 
                 print('----------------------------Root Lin Vel-----------------------------------')
-                print(f"Raw Root Lin Vel: {self.env.simulator.robot_root_states[:, 7:10].cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw Root Lin Vel for Env {i}: \n {self.env.simulator.robot_root_states[i, 7:10].cpu().tolist()}")
+                
+                #print(f"Raw Root Lin Vel: {self.env.simulator.robot_root_states[:, 7:10].cpu().tolist()}")
                 
                 print('----------------------------Root Ang Vel---------------------------------')
-                print(f"Raw Root Ang Vel: {self.env.simulator.robot_root_states[:, 10:13].cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw Root Ang Vel for Env {i}: \n {self.env.simulator.robot_root_states[i, 10:13].cpu().tolist()}")
+                #print(f"Raw Root Ang Vel: {self.env.simulator.robot_root_states[:, 10:13].cpu().tolist()}")
                 
                 print('---------------------------Root Pos------------------------------')
-                print(f"Raw Root Pos: {self.env.simulator.robot_root_states[:, 0:3].cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw Root Pos for Env {i}: \n {self.env.simulator.robot_root_states[i, 0:3].cpu().tolist()}")
+                #print(f"Raw Root Pos: {self.env.simulator.robot_root_states[:, 0:3].cpu().tolist()}")
                 
                 print('------------------------- Root Rot---------------------------------')
-                print(f"Raw Root Rot: {self.env.simulator.robot_root_states[:, 3:7].cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw Root Rot for Env {i}: \n {self.env.simulator.robot_root_states[i, 3:7].cpu().tolist()}")
+                #print(f"Raw Root Rot: {self.env.simulator.robot_root_states[:, 3:7].cpu().tolist()}")
                 
                 print('---------------------------Actions---------------------------------------')
-                
-                print(f"Raw Actions: {policy_state_dict['actions'].cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw Actions for Env {i}: \n {actions[i].cpu().tolist()}")
+                #print(f"Raw Actions: {policy_state_dict['actions'].cpu().tolist()}")
                 
                 print('---------------------------Terminate---------------------------------------')
-                
-                print(f"Raw Terminate: {dones.cpu().tolist()}")
+                for i in range(self.env.num_envs):
+                    print(f"Raw Terminate for Env {i}: \n {dones[i].cpu().tolist()}")
+                #print(f"Raw Terminate: {dones.cpu().tolist()}")
                 print("-" * 50)
 
 
