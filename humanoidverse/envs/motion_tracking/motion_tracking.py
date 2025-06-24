@@ -371,6 +371,17 @@ class LeggedRobotMotionTracking(LeggedRobotBase):
         self.log_dict["vr_3point_diff_norm"] = vr_3point_diff_norm
         self.log_dict["joint_pos_diff_norm"] = joint_pos_diff_norm
         
+        self.log_dict["dof_vel"] = self.simulator.dof_vel
+        self.log_dict["dof_pos"] = self.simulator.dof_pos
+        self.log_dict["root_lin_vel"] = self.simulator.robot_root_states[:, 7:10]
+        self.log_dict["root_ang_vel"] = self.simulator.robot_root_states[:, 10:13]
+        self.log_dict["root_pos"] = self.simulator.robot_root_states[:, 0:3]
+        self.log_dict["root_rot"] = self.simulator.robot_root_states[:, 3:7]
+        if hasattr(self, 'actions') and self.actions is not None:
+            self.log_dict["actions"] = self.actions
+        if hasattr(self, 'reset_buf') and self.reset_buf is not None:
+            self.log_dict["terminate"] = self.reset_buf
+
 
     def _draw_debug_vis(self):
         self.simulator.clear_lines()

@@ -265,6 +265,42 @@ class PPO(BaseAlgo):
                 self.storage.update_key('dones', dones.unsqueeze(1))
                 self.storage.increment_step()
 
+                #obs_dict, rewards, dones, infos = self.env.step(actor_state)
+    
+                # --- 直接在这里打印原始张量 (每个环境步都会打印一次) ---
+                # 警告：这会产生巨大的控制台输出
+                print("#############################################################")
+                print('-----------------------current_learning_iteration----------------------------------')
+                print(f"--- Iteration{self.current_learning_iteration}, Step {i} ---")
+
+                print('----------------------------dof_pos----------------------------------')
+                print(f"Raw DOF Pos: {self.env.simulator.dof_pos.cpu().tolist()}")
+                
+                print('-----------------------------dof_vel----------------------------------')
+                print(f"Raw DOF Vel: {self.env.simulator.dof_vel.cpu().tolist()}")
+                
+                print('----------------------------Root Lin Vel-----------------------------------')
+                print(f"Raw Root Lin Vel: {self.env.simulator.robot_root_states[:, 7:10].cpu().tolist()}")
+                
+                print('----------------------------Root Ang Vel---------------------------------')
+                print(f"Raw Root Ang Vel: {self.env.simulator.robot_root_states[:, 10:13].cpu().tolist()}")
+                
+                print('---------------------------Root Pos------------------------------')
+                print(f"Raw Root Pos: {self.env.simulator.robot_root_states[:, 0:3].cpu().tolist()}")
+                
+                print('------------------------- Root Rot---------------------------------')
+                print(f"Raw Root Rot: {self.env.simulator.robot_root_states[:, 3:7].cpu().tolist()}")
+                
+                print('---------------------------Actions---------------------------------------')
+                
+                print(f"Raw Actions: {policy_state_dict['actions'].cpu().tolist()}")
+                
+                print('---------------------------Terminate---------------------------------------')
+                
+                print(f"Raw Terminate: {dones.cpu().tolist()}")
+                print("-" * 50)
+
+
                 self._process_env_step(rewards, dones, infos)
 
                 if self.log_dir is not None:
@@ -471,72 +507,74 @@ class PPO(BaseAlgo):
         }
 
     def _post_epoch_logging(self, log_dict, width=80, pad=35):
-        self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
-        self.tot_time += log_dict['collection_time'] + log_dict['learn_time']
-        iteration_time = log_dict['collection_time'] + log_dict['learn_time']
+        # self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
+        # self.tot_time += log_dict['collection_time'] + log_dict['learn_time']
+        # iteration_time = log_dict['collection_time'] + log_dict['learn_time']
 
-        ep_string = f''
-        if log_dict['ep_infos']:
-            for key in log_dict['ep_infos'][0]:
-                infotensor = torch.tensor([], device=self.device)
-                for ep_info in log_dict['ep_infos']:
-                    # handle scalar and zero dimensional tensor infos
-                    if not isinstance(ep_info[key], torch.Tensor):
-                        ep_info[key] = torch.Tensor([ep_info[key]])
-                    if len(ep_info[key].shape) == 0:
-                        ep_info[key] = ep_info[key].unsqueeze(0)
-                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                value = torch.mean(infotensor)
-                self.writer.add_scalar('Episode/' + key, value, log_dict['it'])
-                ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
+        # ep_string = f''
+        # if log_dict['ep_infos']:
+        #     for key in log_dict['ep_infos'][0]:
+        #         infotensor = torch.tensor([], device=self.device)
+        #         for ep_info in log_dict['ep_infos']:
+        #             # handle scalar and zero dimensional tensor infos
+        #             if not isinstance(ep_info[key], torch.Tensor):
+        #                 ep_info[key] = torch.Tensor([ep_info[key]])
+        #             if len(ep_info[key].shape) == 0:
+        #                 ep_info[key] = ep_info[key].unsqueeze(0)
+        #             infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+        #         value = torch.mean(infotensor)
+        #         self.writer.add_scalar('Episode/' + key, value, log_dict['it'])
+        #         ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
 
-        train_log_dict = {}
-        mean_std = self.actor.std.mean()
-        fps = int(self.num_steps_per_env * self.env.num_envs / (log_dict['collection_time'] + log_dict['learn_time']))
-        train_log_dict['fps'] = fps
-        train_log_dict['mean_std'] = mean_std.item()
+        # train_log_dict = {}
+        # mean_std = self.actor.std.mean()
+        # fps = int(self.num_steps_per_env * self.env.num_envs / (log_dict['collection_time'] + log_dict['learn_time']))
+        # train_log_dict['fps'] = fps
+        # train_log_dict['mean_std'] = mean_std.item()
 
-        env_log_dict = self.episode_env_tensors.mean_and_clear()
-        env_log_dict = {f"Env/{k}": v for k, v in env_log_dict.items()}
+        # env_log_dict = self.episode_env_tensors.mean_and_clear()
+        # env_log_dict = {f"Env/{k}": v for k, v in env_log_dict.items()}
 
-        self._logging_to_writer(log_dict, train_log_dict, env_log_dict)
+        # self._logging_to_writer(log_dict, train_log_dict, env_log_dict)
 
         str = f" \033[1m Learning iteration {log_dict['it']}/{self.current_learning_iteration + log_dict['num_learning_iterations']} \033[0m "
 
-        if len(log_dict['rewbuffer']) > 0:
-            log_string = (f"""{str.center(width, ' ')}\n\n"""
-                            f"""{'Computation:':>{pad}} {train_log_dict['fps']:.0f} steps/s (Collection: {log_dict[
-                            'collection_time']:.3f}s, Learning {log_dict['learn_time']:.3f}s)\n"""
-                        #   f"""{'Value function loss:':>{pad}} {log_dict['mean_value_loss']:.4f}\n"""
-                        #   f"""{'Surrogate loss:':>{pad}} {log_dict['mean_surrogate_loss']:.4f}\n"""
-                          f"""{'Mean action noise std:':>{pad}} {train_log_dict['mean_std']:.2f}\n"""
-                          f"""{'Mean reward:':>{pad}} {statistics.mean(log_dict['rewbuffer']):.2f}\n"""
-                          f"""{'Mean episode length:':>{pad}} {statistics.mean(log_dict['lenbuffer']):.2f}\n""")
-        else:
-            log_string = (f"""{str.center(width, ' ')}\n\n"""
-                          f"""{'Computation:':>{pad}} {train_log_dict['fps']:.0f} steps/s (collection: {log_dict[
-                            'collection_time']:.3f}s, learning {log_dict['learn_time']:.3f}s)\n"""
-                        #   f"""{'Value function loss:':>{pad}} {log_dict['mean_value_loss']:.4f}\n"""
-                        #   f"""{'Surrogate loss:':>{pad}} {log_dict['mean_surrogate_loss']:.4f}\n"""
-                          f"""{'Mean action noise std:':>{pad}} {train_log_dict['mean_std']:.2f}\n""")
+        # if len(log_dict['rewbuffer']) > 0:
+        #     log_string = (f"""{str.center(width, ' ')}\n\n"""
+        #                     f"""{'Computation:':>{pad}} {train_log_dict['fps']:.0f} steps/s (Collection: {log_dict[
+        #                     'collection_time']:.3f}s, Learning {log_dict['learn_time']:.3f}s)\n"""
+        #                 #   f"""{'Value function loss:':>{pad}} {log_dict['mean_value_loss']:.4f}\n"""
+        #                 #   f"""{'Surrogate loss:':>{pad}} {log_dict['mean_surrogate_loss']:.4f}\n"""
+        #                   f"""{'Mean action noise std:':>{pad}} {train_log_dict['mean_std']:.2f}\n"""
+        #                   f"""{'Mean reward:':>{pad}} {statistics.mean(log_dict['rewbuffer']):.2f}\n"""
+        #                   f"""{'Mean episode length:':>{pad}} {statistics.mean(log_dict['lenbuffer']):.2f}\n""")
+        # else:
+        #     log_string = (f"""{str.center(width, ' ')}\n\n"""
+        #                   f"""{'Computation:':>{pad}} {train_log_dict['fps']:.0f} steps/s (collection: {log_dict[
+        #                     'collection_time']:.3f}s, learning {log_dict['learn_time']:.3f}s)\n"""
+        #                 #   f"""{'Value function loss:':>{pad}} {log_dict['mean_value_loss']:.4f}\n"""
+        #                 #   f"""{'Surrogate loss:':>{pad}} {log_dict['mean_surrogate_loss']:.4f}\n"""
+        #                   f"""{'Mean action noise std:':>{pad}} {train_log_dict['mean_std']:.2f}\n""")
 
-        env_log_string = ""
-        for k, v in env_log_dict.items():
-            entry = f"{f'{k}:':>{pad}} {v:.4f}"
-            env_log_string += f"{entry}\n"
-        log_string += env_log_string
-        log_string += ep_string
-        log_string += (f"""{'-' * width}\n"""
-                       f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
-                       f"""{'Iteration time:':>{pad}} {iteration_time:.2f}s\n"""
-                       f"""{'Total time:':>{pad}} {self.tot_time:.2f}s\n"""
-                       f"""{'ETA:':>{pad}} {self.tot_time / (log_dict['it'] + 1) * (
-                               log_dict['num_learning_iterations'] - log_dict['it']):.1f}s\n""")
-        log_string += f"Logging Directory: {self.log_dir}"
+        # env_log_string = ""
+        # for k, v in env_log_dict.items():
+        #     entry = f"{f'{k}:':>{pad}} {v:.4f}"
+        #     env_log_string += f"{entry}\n"
+        # log_string += env_log_string
+        # log_string += ep_string
+        # log_string += (f"""{'-' * width}\n"""
+        #                f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
+        #                f"""{'Iteration time:':>{pad}} {iteration_time:.2f}s\n"""
+        #                f"""{'Total time:':>{pad}} {self.tot_time:.2f}s\n"""
+        #                f"""{'ETA:':>{pad}} {self.tot_time / (log_dict['it'] + 1) * (
+        #                        log_dict['num_learning_iterations'] - log_dict['it']):.1f}s\n""")
+        # log_string += f"Logging Directory: {self.log_dir}"
 
         # Use rich Live to update a specific section of the console
-        with Live(Panel(log_string, title="Training Log"), refresh_per_second=4, console=console):
-            # Your training loop or other operations
+        # with Live(Panel(log_string, title="Training Log"), refresh_per_second=4, console=console):
+        #     # Your training loop or other operations
+        #     pass
+        with Live(Panel(str, title="Training Progress"), refresh_per_second=4, console=console):
             pass
 
     def _logging_to_writer(self, log_dict, train_log_dict, env_log_dict):
